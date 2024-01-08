@@ -6,27 +6,27 @@ using Images
 using LinearAlgebra
 using ImageInTerminal
 
-
 struct GSplatData
 	means
 	rotations
+	colors
 	scales
 	opacities
 end
 
-n = 10
 
 using Rotations
 
-function genSplatData()
+function genSplatData(n)
 	means = rand(2, n)
 	rots = rand(4, n)
+	colors = rand(3, n)
 	scales = rand(2, n)
 	opacities = rand(1, n)
-	return GSplatData(means, rots, scales, opacities) 
+	return GSplatData(means, rots, colors, scales, opacities) 
 end
 
-splatData = genSplatData()
+splatData = genSplatData(10)
 splats = splatData
 idx = 1
 
@@ -36,42 +36,43 @@ gt = load(joinpath(
 	"six.png"
 ))
 
-img = ones(RGBA{N0f8}, size(gt))
+img = ones(RGBA{N0f8}, (400, 400))
 cimgview = channelview(img)
 cgtview = channelview(gt)
 
-function drawSplat!(cov2d, quadView, opacity, TPrev, αPrev)
+function drawSplat!(cov2d, quadView, point, color, opacity, TPrev, αPrev)
 	sz = size(quadView)
 	idxs = CartesianIndices(Tuple([1:sz[1], 1:sz[2]])) |> collect
 	αs = ones(N0f8, sz...)
 	invCov2d = inv(cov2d)
 	for idx in idxs
-		delta = [idx.I[1] - sz[1]/2, idx.I[2] - sz[2]]./[sz...]
+		delta = [idx.I[1] - point[1], idx.I[2] - point[2]]./[sz...]
 		dist = (delta |> adjoint)*invCov2d*delta
-		α = opacity .* (exp(-dist))
+		α = opacity - opacity*exp(-dist)
 		αs[idx] = α |> N0f8
 	end
 	T = TPrev.*((1.0 |> N0f8) .- αPrev)
 	quadView[:, :] .+= colorview(
 		RGBA, 
-		red.(quadView).*αs.*T, 
-		green.(quadView).*αs.*T, 
-		blue.(quadView).*αs.*T, 
+		repeat([color[1]] .|> N0f8, inner=sz).*αs.*T, 
+		repeat([color[2]] .|> N0f8, inner=sz).*αs.*T, 
+		repeat([color[3]] .|> N0f8, inner=sz).*αs.*T, 
 		αs
 	)
 	αPrev .= αs
 	TPrev .= T
 end
 
-
 function renderSplats(splats, cimage)
 	image = colorview(RGBA, cimage)
 	transmittance = ones(N0f8, size(image))
+	alpha = zeros(N0f8, size(image))
 	nPoints = splats.means |> size |> last
 	for idx in 1:nPoints
 		point = [size(cimage)[2:3]...].*splats.means[:, idx]
 		rot = reshape(splats.rotations[:, idx], (2, 2))
 		scale = Diagonal(splats.scales[:, idx])
+		color = splats.colors[:, idx]
 		W = rot*scale
 
 		cov2d = W*adjoint(W)
@@ -85,19 +86,18 @@ function renderSplats(splats, cimage)
 		r = maximum(λs.values)
 		bb = [size(cimage)[2:3]...].*[-1 1; -1 1]*r .+ point
 		bb = ceil.([
-			max(1, bb[1][1]) min(bb[1, 2], size(image, 1));
-			max(1, bb[2][1]) min(bb[2, 2], size(image, 2))
+			max(1, bb[1][1]) min(bb[1, 2], size(image, 2));
+			max(1, bb[2][1]) min(bb[2, 2], size(image, 1))
 		]) .|> Int
+		# quad = zeros(RGBA{N0f8}, bb[1, :] | length, b[2, :] |> length)
 		quadView = view(image, UnitRange(bb[1, :]...), UnitRange(bb[2, :]...))
-		αPrev = zeros(N0f8, size(quadView))
+		αPrev = view(alpha, UnitRange(bb[1, :]...), UnitRange(bb[2, :]...))
 		opacity = splats.opacities[idx]
 		TPrev = view(transmittance, UnitRange(bb[1, :]...), UnitRange(bb[2, :]...))
-		drawSplat!(cov2d, quadView, opacity, TPrev, αPrev)
+		drawSplat!(cov2d, quadView, point, color, opacity, TPrev, αPrev)
 	end
-	
 	return image
 end
-
 
 outimage = renderSplats(splatData, cimgview)
 
@@ -105,7 +105,6 @@ function forward(splatData, cimgview, gt)
 	outimage = renderSplats(splatData, cimgview)
 	return error(outimage, gt)
 end
-
 
 function error(img, gt)
 	return sum(((1 .-img) .- gt).^2)/(2.0*length(img))
