@@ -1,5 +1,5 @@
 module FontSplat
 
-include("model.jl")
+#include("model.jl")
 
 end # module FontSplat

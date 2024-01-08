@@ -5,6 +5,9 @@ version = "0.1.0"
 
 [deps]
 Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
+ImageInTerminal = "d8c32880-2388-543b-8c61-d9f865259254"
 ImageView = "86fae568-95e7-573e-a6b2-d8a6b900c9ef"
 Images = "916415d5-f1e6-5110-898d-aaa5f9f070e0"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 WGPUgfx = "02f56413-64a8-464d-a8fa-8dfc28b55f81"
