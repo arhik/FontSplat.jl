@@ -40,7 +40,7 @@ img = ones(RGBA{N0f8}, (400, 400))
 cimgview = channelview(img)
 cgtview = channelview(gt)
 
-function drawSplat!(cov2d, quadView, point, color, opacity, TPrev)
+function drawSplat!(cov2d, quadView, point, color, opacity, TPrev, αPrev)
 	sz = size(quadView)
 	idxs = CartesianIndices(Tuple([1:sz[1], 1:sz[2]])) |> collect
 	αs = ones(N0f8, sz...)
@@ -60,14 +60,16 @@ function drawSplat!(cov2d, quadView, point, color, opacity, TPrev)
 		αs
 	)
 	TPrev .= T
+	αPrev .= αs
 end
 
 function renderSplats(splats, cimage)
 	image = colorview(RGBA, cimage)
 	transmittance = ones(N0f8, size(image))
 	nPoints = splats.means |> size |> last
+	alpha = zeros(N0f8, size(image))
 	#forward
-	for idx in 1:nPoints-1
+	for idx in 1:nPoints
 		point = [size(cimage)[2:3]...].*splats.means[:, idx]
 		rot = reshape(splats.rotations[:, idx], (2, 2))
 		scale = Diagonal(splats.scales[:, idx])
@@ -90,12 +92,13 @@ function renderSplats(splats, cimage)
 		]) .|> Int
 		# quad = zeros(RGBA{N0f8}, bb[1, :] | length, b[2, :] |> length)
 		quadView = view(image, UnitRange(bb[1, :]...), UnitRange(bb[2, :]...))
+		αPrev = view(alpha, UnitRange(bb[1, :]...), UnitRange(bb[2, :]...))
 		opacity = splats.opacities[idx]
 		TPrev = view(transmittance, UnitRange(bb[1, :]...), UnitRange(bb[2, :]...))
-		drawSplat!(cov2d, quadView, point, color, opacity, TPrev)
+		drawSplat!(cov2d, quadView, point, color, opacity, TPrev, αPrev)
 	end
-	return image
-	# backward
+		# backward
+		return image
 	for idx in nPoints:1
 		point = [size(cimage)[2:3]...].*splats.means[:, idx]
 		rot = reshape(splats.rotations[:, idx], (2, 2))
