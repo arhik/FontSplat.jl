@@ -196,18 +196,42 @@ for i in 1:10000
 	(tmpimage, grads) = renderSplats(splatData, targetview)
 	println("saving fontsplat $(i)")
 	if i%100 == 0
+		try
 		save("fontsplat$(i).jpg", colorview(RGB{N0f8}, n0f8.(tmpimage)))
+		catch e
+			@warn e
+		end
 	end
 	ΔC = errorGrad(tmpimage, gt)
 	nPoints = size(splatData.means, 2)
+	μGrads = zeros(2, nPoints)
+	cGrads = zeros(3, nPoints)
+	oGrads = zeros(1, nPoints)
+	for pb in grads
+		fs = propertynames(pb) .|> string
+		bbfield = nothing
+		for f in fs
+			if endswith(f, "bb")
+				bbfield = f
+			end
+		end
+		bbox = getfield(pb, Symbol(bbfield))
+		if bbox.contents != Core.Box([1 32; 1 32]).contents
+			@infiltrate
+		end
+	end
+			
 	for idx in nPoints:-1:1
 		(cGrad, oGrad, μGrad, ΣGrad) = grads[idx](ΔC)
-		splatData.means[:, idx] .-= lr.*μGrad./imgSize
-		splatData.colors[:, idx] .-= lr.*cGrad
-		splatData.opacities[:, idx] .-= lr.*oGrad
+		μGrads[:, idx] .+= lr.*μGrad
+		cGrads[:, idx] .+= lr.*cGrad
+		oGrads[:, idx] .+= lr.*oGrad
 		if any(abs.(splatData.means) .> 1.0)
 			@warn "means are diverging"
 		end
 	end
+	#splatData.means .-= μGrads
+	splatData.colors .-= cGrads
+	splatData.opacities .-= oGrads
 end
 
