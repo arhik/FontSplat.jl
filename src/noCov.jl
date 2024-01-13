@@ -6,6 +6,7 @@ using Images
 using LinearAlgebra
 using ImageInTerminal
 using Statistics
+using ImageView
 
 struct GSplatData
 	means
@@ -22,7 +23,7 @@ using Rotations
 function drawSplat!(cov2d, quadView, point, color, opacity, TPrev, αPrev)
 	sz = size(quadView)[2:3]
 	idxs = CartesianIndices(Tuple([1:sz[1], 1:sz[2]]))
-	αs = ones(sz...)
+	αs = zeros(sz...)
 	invCov2d = inv(cov2d)
 	for idx in idxs
 		delta = [idx.I[1] - point[1], idx.I[2] - point[2]]./[sz...]
@@ -40,10 +41,10 @@ function renderSplats(splats, cimage)
 	sz = size(cimage)[2:3]
 	transmittance = ones(sz)
 	nPoints = splats.means |> size |> last
-	alpha = zeros(sz)
+	alpha = zeros(size(cimage)[2:3])
 	#forward
 	for idx in 1:nPoints
-		point = [sz...].*splats.means[:, idx]
+		point = [sz...].*(splats.means[:, idx])
 		rot = reshape(splats.rotations[:, idx], (2, 2))
 		scale = (Diagonal(splats.scales[:, idx]))
 		color = splats.colors[:, idx]
@@ -59,7 +60,7 @@ function renderSplats(splats, cimage)
 		
 		λs = eigen(cov2d)
 		r = ceil(3.0*sqrt(maximum(λs.values)))
-		bb = [sz...].*[-1 1; -1 1]*r .+ point
+		bb = [sz...].*[-1 1; -1 1]*r .+ point/2.0
 		bb = ceil.([
 			max(1, bb[1][1]) min(bb[1, 2], size(cimage, 2));
 			max(1, bb[2][1]) min(bb[2, 2], size(cimage, 3))
@@ -91,8 +92,7 @@ function renderSplats(splats, cimage)
 		
 		λs = eigen(cov2d)
 		r = ceil(3.0*sqrt(maximum(λs.values)))
-		bb = [sz...].*[-1 1; -1 1]*r .+ point
-		@info bb
+		bb = [sz...].*[-1 1; -1 1]*r .+ point./2.0
 		bb = ceil.([
 			max(1, bb[1][1]) min(bb[1, 2], sz[1]);
 			max(1, bb[2][1]) min(bb[2, 2], sz[2])
@@ -100,12 +100,11 @@ function renderSplats(splats, cimage)
 		quadView = view(cimage, :, UnitRange(bb[1, :]...), UnitRange(bb[2, :]...))
 		opacity = splats.opacities[idx]
 		quadSize = size(quadView)[2:3]
-		@info "size" sz quadSize
 		idxs = CartesianIndices(Tuple([1:quadSize[1], 1:quadSize[2]])) |> collect
 		αs = ones(quadSize...)
 		invCov2d = inv(cov2d)
-		Δo = zeros(Float32, quadSize...)
-		Δσ = zeros(Float32, quadSize...)
+		Δo = zeros(Float32, 1, quadSize...)
+		Δσ = zeros(Float32, 1, quadSize...)
 		Δμ = zeros(Float32, 2, quadSize...)
 		ΔΣ = zeros(Float32, 2, 2, quadSize...)
 		for pidx in idxs
@@ -115,8 +114,8 @@ function renderSplats(splats, cimage)
 			ΔΣ[:, :, pidx] .= -0.5.*(invCov2d*delta*(delta |> adjoint)*(invCov2d |> adjoint))
 			α = opacity*exp(-dist)
 			αs[pidx] = α
-			Δo[pidx] = exp(-dist)
-			Δσ[pidx] = -opacity*exp(-dist)
+			Δo[:, pidx] .= exp(-dist)
+			Δσ[:, pidx] .= -opacity*exp(-dist)
 		end
 		# calculate gradients for colors of splats
 		TPrev = view(transmittance, UnitRange(bb[1, :]...), UnitRange(bb[2, :]...))
@@ -127,7 +126,7 @@ function renderSplats(splats, cimage)
 		grad = (ΔC) -> begin
 			cGrad = Δc.*view(ΔC, :, UnitRange(bb[1, :]...), UnitRange(bb[2, :]...))
 			cgGrad = sum(cGrad, dims=(2, 3))[:]
-			αGrad = sum(Δα.*cgGrad, dims=1)
+			αGrad = sum(Δα.*cGrad, dims=1)
 			oGrad = sum(Δo.*αGrad)
 			σGrad = sum(Δσ.*αGrad)
 			μGrad = sum(Δμ.*σGrad, dims=(2, 3))[:]
@@ -160,53 +159,57 @@ function errorGrad(img, gt)
 	return (cimgview .- gtview)/length(cimgview)
 end
 
-n = 4
+n = 10
 
 staticRot = repeat([1, 0, 0, 1], 1, n);
 staticMeans = repeat([0.5, 0.5], 1, n)
 staticOpacities = rand(1, n)
-staticScales = ones(2, n)
+staticScales = 0.5.*ones(2, n)
 staticColors = rand(3, n)# ([1.0, 0.0, 0.0], 1, n)
 
 function genSplatData(n)
 	means = rand(2, n)
 	rots = staticRot#rand(4, n) 
 	colors = rand(3, n)
-	scales = staticScales # rand(4, n)
+	scales = staticScales # rand(2, n)
 	opacities = rand(1, n)
 	return GSplatData(means, rots, colors, scales, opacities) 
 end
 
 splatDataOriginal = genSplatData(n)
 
-imgSize = (32, 32)
+imgSize = (20, 30)
 
-img = zeros(RGB{N0f8}, imgSize)
-cimgview = channelview(img) .|> float
-(outimage, grads) = renderSplats(splatDataOriginal, cimgview)
-save("fontsplat.jpg", colorview(RGB{N0f8}, n0f8.(outimage)))
+imgsrc = nothing#"pointgraphics.jpg"
+
+if imgsrc == nothing
+	img = zeros(RGB{N0f8}, imgSize)
+	cimgview = channelview(img) .|> float
+	(outimage, grads) = renderSplats(splatDataOriginal, cimgview)
+	save("fontsplat.jpg", colorview(RGB{N0f8}, n0f8.(outimage)))
+else
+	img = load(imgsrc)
+	img = imresize(img, imgSize)
+	save("fontsplat.jpg", img)
+end
 
 gt = load("fontsplat.jpg")
+
 splatData = genSplatData(n)
-lr = 0.001
-for i in 1:10000
+lr = 0.01
+for i in 0001:20000
 	@info "iteration: $(i)"
 	target = zeros(RGB{N0f8}, imgSize)
-	targetview = channelview(img) .|> float
+	targetview = channelview(target) .|> float
 	(tmpimage, grads) = renderSplats(splatData, targetview)
 	println("saving fontsplat $(i)")
 	if i%100 == 0
-		try
 		save("fontsplat$(i).jpg", colorview(RGB{N0f8}, n0f8.(tmpimage)))
-		catch e
-			@warn e
-		end
 	end
 	ΔC = errorGrad(tmpimage, gt)
 	nPoints = size(splatData.means, 2)
-	μGrads = zeros(2, nPoints)
-	cGrads = zeros(3, nPoints)
-	oGrads = zeros(1, nPoints)
+	
+	"""
 	for pb in grads
 		fs = propertynames(pb) .|> string
 		bbfield = nothing
@@ -220,18 +223,56 @@ for i in 1:10000
 			@infiltrate
 		end
 	end
-			
+	"""
+	
 	for idx in nPoints:-1:1
 		(cGrad, oGrad, μGrad, ΣGrad) = grads[idx](ΔC)
-		μGrads[:, idx] .+= lr.*μGrad
-		cGrads[:, idx] .+= lr.*cGrad
-		oGrads[:, idx] .+= lr.*oGrad
-		if any(abs.(splatData.means) .> 1.0)
-			@warn "means are diverging"
-		end
+		splatData.means[:, idx] .-= (lr.*μGrad)
+		splatData.colors[:, idx] .-= lr.*cGrad
+		splatData.opacities[:, idx] .-= lr.*oGrad
+		#if any(abs.(splatData.means) .> 1.0)
+		#	@warn "means are diverging"
+		#end
 	end
-	#splatData.means .-= μGrads
-	splatData.colors .-= cGrads
-	splatData.opacities .-= oGrads
 end
 
+# THESE ARE TESTS
+
+# Testing Color Gradients ...
+
+function testColorsGrads()
+	n = 4
+	αs = rand(n);
+	cns = rand(3, n);
+	ci = zeros(3);
+
+	t = 1.0
+	for idx in 1:n
+		ci += cns[:, idx].*αs[idx].*t
+		t *= (1 - αs[idx])
+	end
+
+	cnhats = rand(3, n)
+
+	for itr in 1:100000
+		local t
+		cihat = zeros(3)
+		t = 1.0
+		for idx in 1:n
+			cihat += cnhats[:, idx].*αs[idx].*t
+			t *= (1 - αs[idx])
+		end
+		Δci = cihat .- ci
+		αsPrev = 0.0
+		for idx in n:-1:1
+			α = αs[idx]
+			t = t/(1.0 - αsPrev)
+			Δcn = α.*t.*Δci
+			αsPrev = α
+			cnhats[:, idx] .-= 0.001.*Δcn
+		end
+		@info "Loss" sum(Δci.^2)
+		@info "cn" sum((cnhats .- cns).^2)
+	end
+	return (cns, cnhats)
+end
