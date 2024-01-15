@@ -48,15 +48,18 @@ function renderSplats(splats, cimage)
 	alpha = zeros(sz)
 	#forward
 	for idx in 1:nPoints
-		point = [sz...].*(splats.means[:, idx] .|> sigmoid)
-		rot = reshape(splats.rotations[:, idx], (2, 2))
-		scale = (Diagonal(splats.scales[:, idx] .|> exp))
+		point = [sz...].*((splats.means[:, idx] .|> sigmoid))
+		
+		# Constructing 2D rotation matrices
+		rot = RotZ((pi/2.0).*tan.(splats.rotations[:, idx])...)[1:2, 1:2]
+		
+		scale = (Diagonal(clamp.(splats.scales[:, idx] .|> exp, 0.0, 1.0)))
 		color = splats.colors[:, idx]
 		W = rot*scale
-
+		
 		cov2d = W*adjoint(W)
 		Δ = det(cov2d)
-
+		
 		if Δ < 0.0
 			@warn "Determinant is negative"
 			continue
@@ -81,17 +84,18 @@ function renderSplats(splats, cimage)
 	grads = []
 	#cimage = deepcopy(cimage)
 	for idx in nPoints:-1:1
-		point = [sz...].*splats.means[:, idx]
-		rot = reshape(splats.rotations[:, idx], (2, 2))
-		scale = Diagonal(splats.scales[:, idx] .|> exp)
+		point = [sz...].*((splats.means[:, idx]) .|> sigmoid)
+		rot = RotZ((pi/2.0).*tan.(splats.rotations[:, idx])...)[1:2, 1:2]
+		scale = Diagonal(clamp.(splats.scales[:, idx] .|> exp, 0.0, 1.0))
 		color = splats.colors[:, idx]
 		W = rot*scale
-
+		
 		cov2d = W*adjoint(W)
 		Δ = det(cov2d)
-
+		
 		if Δ < 0.0
 			@warn "Determinant is negative"
+			push!(grads, (_) -> (0.0, 0.0, 0.0, 0.0, Diagonal{Float32}(undef, 2).=0.0))
 			continue
 		end
 		
@@ -118,7 +122,7 @@ function renderSplats(splats, cimage)
 			Δμ[:, pidx] .= invCov2d*delta./[sz[1], sz[2]]
 			ΔΣ[:, :, pidx] .= -0.5.*(invCov2d*delta*(delta |> adjoint)*(invCov2d |> adjoint))
 			α = opacity*exp(-dist)
-			αs[pidx] = α |> sigmoid
+			αs[pidx] = clamp(α, 0.00001, 0.99)
 			Δo[:, pidx] .= exp(-dist)
 			Δσ[:, pidx] .= -opacity*exp(-dist)
 		end
@@ -141,8 +145,9 @@ function renderSplats(splats, cimage)
 			ΣGrad = sum(ΔΣ.*σGrad, dims=(3, 4))[:, :]
 			wGrad = ΣGrad*W + (ΣGrad |> adjoint)*W
 			rGrad = wGrad*(scale |> adjoint)
+			θGrad = sum([0 -1; 1 0]*rot*rGrad)
 			sGrad = (rot |> adjoint)*wGrad
-			return (cgGrad, oGrad, μGrad, rGrad, sGrad)
+			return (cgGrad, oGrad, μGrad, θGrad, sGrad)
 		end
 		push!(grads, grad)
 		# update S
@@ -174,25 +179,34 @@ n = 3
 staticRot = repeat([1, 0, 0, 1], 1, n);
 staticMeans = repeat([0.5, 0.5], 1, n)
 staticOpacities = rand(1, n)
-staticScales = 0.4.*ones(2, n)
+staticScales = 0.3.*ones(2, n)
 staticColors = rand(3, n)# ([1.0, 0.0, 0.0], 1, n)
 
 using Rotations
 
 function genSplatData(n)
 	means = rand(2, n)
-	rots = cat(map(x->RotZ(x)[1:2, 1:2][:], rand(1, n))..., dims=2)
+	rots = 2.0.*rand(1, n) .- 1.0
 	colors = rand(3, n)
-	scales = 0.3.*rand(2, n)
+	scales = 2.0.*rand(2, n) .- 1.0
 	opacities = rand(1, n)
 	return GSplatData(means, rots, colors, scales, opacities) 
 end
 
-splatDataOriginal = genSplatData(n)
+function genSplatReference(n)
+	means = repeat([0.5, 0.5], 1, n)
+	rots = reshape([i*2/((n+1)) for i in 1:n], 1, n) .- 1.0
+	colors = channelview(map(x -> RGB(HSV(repeat([x*1/n], 3)...)), 1:n)) |> collect
+	scales = -[2.0,0.5].*ones(2, n)
+	opacities = 0.6.*ones(1, n)
+	return GSplatData(means, rots, colors, scales, opacities) 
+end
+
+splatDataOriginal = genSplatReference(n)
 
 imgSize = (32, 32)
 
-imgsrc = nothing#"pointgraphics.jpg"
+imgsrc = nothing#"webgpu.jpg"
 
 if imgsrc == nothing
 	img = zeros(RGB{N0f8}, imgSize)
@@ -208,7 +222,7 @@ end
 gt = load("fontsplat.jpg")
 
 splatData = genSplatData(n)
-lr = 0.005
+lr = 0.001
 for i in 0001:20000
 	@info "iteration: $(i)"
 	target = zeros(RGB{N0f8}, imgSize)
@@ -237,12 +251,12 @@ for i in 0001:20000
 	end
 	"""
 	
-	for idx in nPoints:-1:1
-		(cGrad, oGrad, μGrad, rGrad, sGrad) = grads[idx](ΔC)
+	for (idx, gradf) in enumerate(grads)
+		(cGrad, oGrad, μGrad, θGrad, sGrad) = gradf(ΔC)
 		splatData.means[:, idx] .-= (lr.*μGrad)
 		splatData.colors[:, idx] .-= lr.*cGrad
 		splatData.opacities[:, idx] .-= lr.*oGrad
-		splatData.rotations[:, idx] .-= (lr.*rGrad)[:]
+		splatData.rotations[:, idx] .-= (lr.*θGrad)
 		splatData.scales[:, idx] .-= (diag(lr.*sGrad)[:])
 		#if any(abs.(splatData.means) .> 1.0)
 		#	@warn "means are diverging"
