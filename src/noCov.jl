@@ -16,6 +16,13 @@ struct GSplatData
 	opacities
 end
 
+function Base.show(io::IO, g::GSplatData)
+	println("GSplatData")
+	for i in propertynames(g)
+		println("\t $(i) :$(getfield(g, i))")
+	end
+end
+
 using Infiltrator
 
 using Rotations
@@ -29,7 +36,7 @@ function drawSplat!(cov2d, quadView, point, color, opacity, TPrev, αPrev)
 		delta = [idx.I[1] - point[1], idx.I[2] - point[2]]./[sz...]
 		dist = (delta |> adjoint)*invCov2d*delta
 		α = opacity*exp(-dist)
-		αs[idx] = α
+		αs[idx] = α 
 	end
 	quadView .+= repeat(color, 1, sz...).*reshape(αs.*TPrev, (1, sz...))
 	TPrev .*= (1.0 .- αPrev)
@@ -48,7 +55,7 @@ function renderSplats(splats, cimage)
 	alpha = zeros(sz)
 	#forward
 	for idx in 1:nPoints
-		point = [sz...].*((splats.means[:, idx] .|> sigmoid))
+		point = [sz...].*((splats.means[:, idx]))
 		
 		# Constructing 2D rotation matrices
 		rot = RotZ((pi/2.0).*tan.(splats.rotations[:, idx])...)[1:2, 1:2]
@@ -58,6 +65,9 @@ function renderSplats(splats, cimage)
 		W = rot*scale
 		
 		cov2d = W*adjoint(W)
+		cov2d[1, 1] += 0.05
+		cov2d[2, 2] += 0.05
+		
 		Δ = det(cov2d)
 		
 		if Δ < 0.0
@@ -84,13 +94,15 @@ function renderSplats(splats, cimage)
 	grads = []
 	#cimage = deepcopy(cimage)
 	for idx in nPoints:-1:1
-		point = [sz...].*((splats.means[:, idx]) .|> sigmoid)
+		point = [sz...].*((splats.means[:, idx]))
 		rot = RotZ((pi/2.0).*tan.(splats.rotations[:, idx])...)[1:2, 1:2]
 		scale = Diagonal(clamp.(splats.scales[:, idx] .|> exp, 0.0, 1.0))
 		color = splats.colors[:, idx]
 		W = rot*scale
 		
 		cov2d = W*adjoint(W)
+		cov2d[1, 1] += 0.05
+		cov2d[2, 2] += 0.05
 		Δ = det(cov2d)
 		
 		if Δ < 0.0
@@ -122,7 +134,7 @@ function renderSplats(splats, cimage)
 			Δμ[:, pidx] .= invCov2d*delta./[sz[1], sz[2]]
 			ΔΣ[:, :, pidx] .= -0.5.*(invCov2d*delta*(delta |> adjoint)*(invCov2d |> adjoint))
 			α = opacity*exp(-dist)
-			αs[pidx] = clamp(α, 0.00001, 0.99)
+			αs[pidx] = α 
 			Δo[:, pidx] .= exp(-dist)
 			Δσ[:, pidx] .= -opacity*exp(-dist)
 		end
@@ -145,7 +157,8 @@ function renderSplats(splats, cimage)
 			ΣGrad = sum(ΔΣ.*σGrad, dims=(3, 4))[:, :]
 			wGrad = ΣGrad*W + (ΣGrad |> adjoint)*W
 			rGrad = wGrad*(scale |> adjoint)
-			θGrad = sum([0 -1; 1 0]*rot*rGrad)
+			RGrad = [0 -1; 1 0]*rot*rGrad
+			θGrad = atan(RGrad[2, 1], RGrad[2, 2])/2.0
 			sGrad = (rot |> adjoint)*wGrad
 			return (cgGrad, oGrad, μGrad, θGrad, sGrad)
 		end
@@ -188,17 +201,28 @@ function genSplatData(n)
 	means = rand(2, n)
 	rots = 2.0.*rand(1, n) .- 1.0
 	colors = rand(3, n)
-	scales = 2.0.*rand(2, n) .- 1.0
+	scales = 2.0.*rand(2, n) .- 2.0
 	opacities = rand(1, n)
 	return GSplatData(means, rots, colors, scales, opacities) 
 end
 
+"""
 function genSplatReference(n)
 	means = repeat([0.5, 0.5], 1, n)
 	rots = reshape([i*2/((n+1)) for i in 1:n], 1, n) .- 1.0
-	colors = channelview(map(x -> RGB(HSV(repeat([x*1/n], 3)...)), 1:n)) |> collect
-	scales = -[2.0,0.5].*ones(2, n)
+	colors = channelview(map(x -> RGB(HSV(rand().*repeat([x*1/n], 3)...)), 1:n)) |> collect
+	scales = 2.0.*rand(2, n) .- 4.0
 	opacities = 0.6.*ones(1, n)
+	return GSplatData(means, rots, colors, scales, opacities) 
+end
+"""
+
+function genSplatReference(n)
+	means = repeat([0.55, 0.55], 1, n)
+	rots = reshape([i*2/((n+1)) for i in 1:n], 1, n) .- 1.0
+	colors = channelview(map(x -> RGB(HSL(repeat([x*1/n], 3)...)), 1:n)) |> collect
+	scales = -0.69314718.*[1.0, 3.0].*ones(2, n)
+	opacities = ones(1, n)
 	return GSplatData(means, rots, colors, scales, opacities) 
 end
 
@@ -206,7 +230,7 @@ splatDataOriginal = genSplatReference(n)
 
 imgSize = (32, 32)
 
-imgsrc = nothing#"webgpu.jpg"
+imgsrc = nothing #"G.jpg"
 
 if imgsrc == nothing
 	img = zeros(RGB{N0f8}, imgSize)
@@ -222,7 +246,7 @@ end
 gt = load("fontsplat.jpg")
 
 splatData = genSplatData(n)
-lr = 0.001
+lr = 0.01
 for i in 0001:20000
 	@info "iteration: $(i)"
 	target = zeros(RGB{N0f8}, imgSize)
@@ -256,8 +280,8 @@ for i in 0001:20000
 		splatData.means[:, idx] .-= (lr.*μGrad)
 		splatData.colors[:, idx] .-= lr.*cGrad
 		splatData.opacities[:, idx] .-= lr.*oGrad
-		splatData.rotations[:, idx] .-= (lr.*θGrad)
-		splatData.scales[:, idx] .-= (diag(lr.*sGrad)[:])
+		splatData.rotations[:, idx] .-= lr.*θGrad
+		splatData.scales[:, idx] .-= lr.*diag(sGrad)
 		#if any(abs.(splatData.means) .> 1.0)
 		#	@warn "means are diverging"
 		#end
