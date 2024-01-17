@@ -47,11 +47,24 @@ function testColorsGrads()
 end
 
 function testRotationGrads()
-	n = 2
-	αs = rand(1, n)
-	cns = rand(3, n);
-	ci = zeros(3);
+	θ = pi/2
+	θref = pi/3.4
 
+	rot = RotZ(θ)[1:2, 1:2]
+	rotRef = RotZ(θref)[1:2, 1:2]
+
+
+	rGrad = [0 -1; 1 0]*rot*Δc
+
+	lr = 0.01
+	for i in 1:1000
+		global θ
+		Δc = sum((rot - rotRef).^2)
+		rGrad = sum([0 -1; 1 0]*rot*Δc)
+		θ -= lr*rGrad
+		θ %= pi
+	end
+	
 	t = 1.0
 	for idx in 1:n
 		ci += cns[:, idx].*αs[idx].*t
