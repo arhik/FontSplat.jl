@@ -101,3 +101,19 @@ function testRotationGrads()
 end
 
 
+
+θRef = pi/2.1
+
+θ = rand()
+
+RRef = RotZ(θRef)[1:2, 1:2]
+lr = 0.01
+for _ in 1:1000
+	global θ
+	R = RotZ(θ)[1:2, 1:2]
+	ΔR = (RRef .- R)[1:2, 1:2]
+	ΔGrad = [0 -1; 1 0]*R*ΔR
+	Δθ = atan(ΔGrad[2, 1], ΔGrad[2, 2])
+	θ -= lr*Δθ
+	@info θ
+end

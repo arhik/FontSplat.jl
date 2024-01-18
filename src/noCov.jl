@@ -36,7 +36,7 @@ function drawSplat!(cov2d, quadView, point, color, opacity, TPrev, αPrev)
 		delta = [idx.I[1] - point[1], idx.I[2] - point[2]]./[sz...]
 		dist = (delta |> adjoint)*invCov2d*delta
 		α = opacity*exp(-dist)
-		αs[idx] = α 
+		αs[idx] = α
 	end
 	quadView .+= repeat(color, 1, sz...).*reshape(αs.*TPrev, (1, sz...))
 	TPrev .*= (1.0 .- αPrev)
@@ -55,7 +55,7 @@ function renderSplats(splats, cimage)
 	alpha = zeros(sz)
 	#forward
 	for idx in 1:nPoints
-		point = [sz...].*((splats.means[:, idx]))
+		point = [sz...].*((splats.means[:, idx]) .|> sigmoid)
 		
 		# Constructing 2D rotation matrices
 		rot = RotZ((pi/2.0).*tan.(splats.rotations[:, idx])...)[1:2, 1:2]
@@ -70,7 +70,7 @@ function renderSplats(splats, cimage)
 		
 		Δ = det(cov2d)
 		
-		if Δ < 0.0
+		if Δ == 0.0
 			@warn "Determinant is negative"
 			continue
 		end
@@ -94,7 +94,7 @@ function renderSplats(splats, cimage)
 	grads = []
 	#cimage = deepcopy(cimage)
 	for idx in nPoints:-1:1
-		point = [sz...].*((splats.means[:, idx]))
+		point = [sz...].*((splats.means[:, idx]) .|> sigmoid)
 		rot = RotZ((pi/2.0).*tan.(splats.rotations[:, idx])...)[1:2, 1:2]
 		scale = Diagonal(clamp.(splats.scales[:, idx] .|> exp, 0.0, 1.0))
 		color = splats.colors[:, idx]
@@ -105,7 +105,7 @@ function renderSplats(splats, cimage)
 		cov2d[2, 2] += 0.05
 		Δ = det(cov2d)
 		
-		if Δ < 0.0
+		if Δ == 0.0
 			@warn "Determinant is negative"
 			push!(grads, (_) -> (0.0, 0.0, 0.0, 0.0, Diagonal{Float32}(undef, 2).=0.0))
 			continue
@@ -134,7 +134,7 @@ function renderSplats(splats, cimage)
 			Δμ[:, pidx] .= invCov2d*delta./[sz[1], sz[2]]
 			ΔΣ[:, :, pidx] .= -0.5.*(invCov2d*delta*(delta |> adjoint)*(invCov2d |> adjoint))
 			α = opacity*exp(-dist)
-			αs[pidx] = α 
+			αs[pidx] = α
 			Δo[:, pidx] .= exp(-dist)
 			Δσ[:, pidx] .= -opacity*exp(-dist)
 		end
@@ -158,7 +158,7 @@ function renderSplats(splats, cimage)
 			wGrad = ΣGrad*W + (ΣGrad |> adjoint)*W
 			rGrad = wGrad*(scale |> adjoint)
 			RGrad = [0 -1; 1 0]*rot*rGrad
-			θGrad = atan(RGrad[2, 1], RGrad[2, 2])/2.0
+			θGrad = atan(RGrad[2, 1], RGrad[2, 2])
 			sGrad = (rot |> adjoint)*wGrad
 			return (cgGrad, oGrad, μGrad, θGrad, sGrad)
 		end
@@ -176,7 +176,7 @@ function forward(splatData, cimgview, gt)
 end
 
 function error(img, gt)
-	return sum((img .- gt).^2)/(2.0*length(img))
+	return sum(abs.(img .- gt))/(2.0*length(img))
 end
 
 function errorGrad(img, gt)
@@ -184,10 +184,10 @@ function errorGrad(img, gt)
 	gtview = channelview(gt)
 	s = error(cimgview, gtview)
 	@info "loss : " s
-	return (cimgview .- gtview)/length(cimgview)
+	return 2.0.*(((cimgview .- gtview) .> 0) .- 0.5)/length(cimgview)
 end
 
-n = 3
+n = 1
 
 staticRot = repeat([1, 0, 0, 1], 1, n);
 staticMeans = repeat([0.5, 0.5], 1, n)
@@ -218,7 +218,7 @@ end
 """
 
 function genSplatReference(n)
-	means = repeat([0.55, 0.55], 1, n)
+	means = repeat([0.5, 0.5], 1, n)
 	rots = reshape([i*2/((n+1)) for i in 1:n], 1, n) .- 1.0
 	colors = channelview(map(x -> RGB(HSL(repeat([x*1/n], 3)...)), 1:n)) |> collect
 	scales = -0.69314718.*[1.0, 3.0].*ones(2, n)
@@ -246,7 +246,7 @@ end
 gt = load("fontsplat.jpg")
 
 splatData = genSplatData(n)
-lr = 0.01
+lr = 0.1
 for i in 0001:20000
 	@info "iteration: $(i)"
 	target = zeros(RGB{N0f8}, imgSize)
@@ -287,4 +287,3 @@ for i in 0001:20000
 		#end
 	end
 end
-
