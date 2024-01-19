@@ -58,7 +58,7 @@ function renderSplats(splats, cimage)
 		point = [sz...].*((splats.means[:, idx]) .|> sigmoid)
 		
 		# Constructing 2D rotation matrices
-		rot = RotZ((pi/2.0).*tan.(splats.rotations[:, idx])...)[1:2, 1:2]
+		rot = RotZ((pi).*(splats.rotations[:, idx])...)[1:2, 1:2]
 		
 		scale = (Diagonal(clamp.(splats.scales[:, idx] .|> exp, 0.0, 1.0)))
 		color = splats.colors[:, idx]
@@ -91,11 +91,12 @@ function renderSplats(splats, cimage)
 	# backward
 	S = zeros(Float32, size(cimage)...)
 	alpha .= 0.0
+	local grads
 	grads = []
 	#cimage = deepcopy(cimage)
 	for idx in nPoints:-1:1
 		point = [sz...].*((splats.means[:, idx]) .|> sigmoid)
-		rot = RotZ((pi/2.0).*tan.(splats.rotations[:, idx])...)[1:2, 1:2]
+		rot = RotZ((pi/2.0).*(splats.rotations[:, idx])...)[1:2, 1:2]
 		scale = Diagonal(clamp.(splats.scales[:, idx] .|> exp, 0.0, 1.0))
 		color = splats.colors[:, idx]
 		W = rot*scale
@@ -175,19 +176,20 @@ function forward(splatData, cimgview, gt)
 	return error(outimage, gt)
 end
 
-function error(img, gt)
-	return sum(abs.(img .- gt))/(2.0*length(img))
+function loss(img, gt)
+	λ = 0.1
+	return (1-λ)*sum(abs.(img .- gt))/(2.0*length(img)) + λ*(1 .- assess_ssim(img, gt))/2.0
 end
 
 function errorGrad(img, gt)
 	cimgview = channelview(img)
 	gtview = channelview(gt)
-	s = error(cimgview, gtview)
+	s = loss(cimgview, gtview)
 	@info "loss : " s
 	return 2.0.*(((cimgview .- gtview) .> 0) .- 0.5)/length(cimgview)
 end
 
-n = 1
+n = 3
 
 staticRot = repeat([1, 0, 0, 1], 1, n);
 staticMeans = repeat([0.5, 0.5], 1, n)
@@ -203,7 +205,7 @@ function genSplatData(n)
 	colors = rand(3, n)
 	scales = 2.0.*rand(2, n) .- 2.0
 	opacities = rand(1, n)
-	return GSplatData(means, rots, colors, scales, opacities) 
+	return GSplatData(means, rots, colors, scales, opacities)
 end
 
 """
@@ -221,9 +223,9 @@ function genSplatReference(n)
 	means = repeat([0.5, 0.5], 1, n)
 	rots = reshape([i*2/((n+1)) for i in 1:n], 1, n) .- 1.0
 	colors = channelview(map(x -> RGB(HSL(repeat([x*1/n], 3)...)), 1:n)) |> collect
-	scales = -0.69314718.*[1.0, 3.0].*ones(2, n)
+	scales = -0.69314718.*[1.0, 2.0].*ones(2, n)
 	opacities = ones(1, n)
-	return GSplatData(means, rots, colors, scales, opacities) 
+	return GSplatData(means, rots, colors, scales, opacities)
 end
 
 splatDataOriginal = genSplatReference(n)
@@ -246,7 +248,7 @@ end
 gt = load("fontsplat.jpg")
 
 splatData = genSplatData(n)
-lr = 0.1
+lr = 0.01
 for i in 0001:20000
 	@info "iteration: $(i)"
 	target = zeros(RGB{N0f8}, imgSize)
@@ -286,4 +288,19 @@ for i in 0001:20000
 		#	@warn "means are diverging"
 		#end
 	end
+end
+
+
+@tracepoint "ssim" function ssim(x, y; k1=0.01, k2=0.02)
+	dr = 1/255
+	c1 = (k1*dr)^2
+	c2 = (k2*dr)^2
+	μx = mean(x)
+	μy = mean(y)
+	σx = (@. (x - μx)^2) |> mean
+	σy = (@. (y - μy)^2) |> mean
+	σxy = (@. (x - μx)*(y - μy)) |> mean
+	l = (2*μx*μy + c1)/(μx*μx + μy*μy + c1)
+	c = (2*σxy + c2)/(σx*σx + σy*σy + c2)
+	return l*c
 end
