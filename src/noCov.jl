@@ -177,8 +177,8 @@ function forward(splatData, cimgview, gt)
 end
 
 function loss(img, gt)
-	λ = 0.1
-	return (1-λ)*sum(abs.(img .- gt))/(2.0*length(img)) + λ*(1 .- assess_ssim(img, gt))/2.0
+	λ = 0.0
+	return (1-λ)*sum(abs.(img .- gt))/(2.0*length(img)) #+ λ*(1 .- assess_ssim(img, gt))/2.0
 end
 
 function errorGrad(img, gt)
@@ -189,7 +189,7 @@ function errorGrad(img, gt)
 	return 2.0.*(((cimgview .- gtview) .> 0) .- 0.5)/length(cimgview)
 end
 
-n = 3
+n = 1
 
 staticRot = repeat([1, 0, 0, 1], 1, n);
 staticMeans = repeat([0.5, 0.5], 1, n)
@@ -248,7 +248,7 @@ end
 gt = load("fontsplat.jpg")
 
 splatData = genSplatData(n)
-lr = 0.01
+lr = 0.1
 for i in 0001:20000
 	@info "iteration: $(i)"
 	target = zeros(RGB{N0f8}, imgSize)
@@ -284,15 +284,15 @@ for i in 0001:20000
 		splatData.opacities[:, idx] .-= lr.*oGrad
 		splatData.rotations[:, idx] .-= lr.*θGrad
 		splatData.scales[:, idx] .-= lr.*diag(sGrad)
-		#if any(abs.(splatData.means) .> 1.0)
-		#	@warn "means are diverging"
-		#end
+		# if any(abs.(splatData.means) .> 1.0)
+		#	 @warn "means are diverging"
+		# end
 	end
 end
 
 
-@tracepoint "ssim" function ssim(x, y; k1=0.01, k2=0.02)
-	dr = 1/255
+function ssim(x, y; k1=0.01, k2=0.02, dynamicRange=1.0)
+	dr = dynamicRange
 	c1 = (k1*dr)^2
 	c2 = (k2*dr)^2
 	μx = mean(x)
@@ -304,3 +304,4 @@ end
 	c = (2*σxy + c2)/(σx*σx + σy*σy + c2)
 	return l*c
 end
+
